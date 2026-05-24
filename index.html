@@ -1270,7 +1270,7 @@
     }
     .deform-overlay-canvas {
       position: absolute; width: 100%; height: 100%; top: 0; left: 0;
-      z-index: 4; cursor: crosshair;
+      z-index: 4; cursor: crosshair; touch-action: none;
     }
 
     /* Welcome Dropzone */
@@ -1319,9 +1319,10 @@
       z-index: 1050;
     }
     .deform-context-menu-item {
-      padding: 8px 14px; font-size: 12px; color: var(--text-main);
+      padding: 14px 16px; font-size: 13px; color: var(--text-main);
       cursor: pointer; display: flex; align-items: center; gap: 10px;
       transition: background var(--transition-fast);
+      touch-action: manipulation; min-height: 44px;
     }
     .deform-context-menu-item:hover { background-color: rgba(255,255,255,0.05); }
     .deform-context-menu-item.danger { color: #f87171; }
@@ -1398,7 +1399,7 @@
 
     /* Bottom Bar */
     .deform-bottom-bar {
-      height: 40px;
+      height: 52px;
       background-color: var(--bg-panel);
       border-top: 1px solid var(--border-color);
       display: flex; align-items: center; justify-content: space-between;
@@ -1408,6 +1409,25 @@
     .deform-bottom-group { display: flex; align-items: center; gap: 16px; }
     .deform-bottom-metric { display: flex; align-items: center; gap: 6px; }
     .deform-bottom-metric-val { font-weight: 700; color: var(--text-main); }
+    /* Warp bottom bar zoom/fit buttons override */
+    .deform-zoom-btn {
+      width: 36px; height: 36px; font-size: 16px; padding: 0;
+      display: inline-flex; align-items: center; justify-content: center;
+      touch-action: manipulation;
+    }
+    .deform-fit-btn {
+      height: 36px; font-size: 11px; padding: 0 10px;
+      touch-action: manipulation;
+    }
+    /* Warp grid density slider override */
+    #def-grid-density-slider {
+      width: 80px !important; height: 6px !important;
+      touch-action: none !important; cursor: pointer;
+    }
+    /* Deform layer rows */
+    #def-layer-list > div {
+      min-height: 44px;
+    }
 
     @keyframes deformPulse {
       0% { opacity: 0.6; transform: scale(0.98); }
@@ -3995,8 +4015,7 @@
           <span>Grid:</span>
           <div style="display:flex; align-items:center; gap:8px;">
             <input type="range" id="def-grid-density-slider" min="4" max="8" step="1" value="4"
-              oninput="DeformEditor.changeGridDensity(this.value)"
-              style="width:55px; height:4px; outline:none; background:rgba(255,255,255,0.1); appearance:none; -webkit-appearance:none; cursor:pointer;">
+              oninput="DeformEditor.changeGridDensity(this.value)">
             <span class="deform-bottom-metric-val" id="def-bar-grid-label">4x4</span>
           </div>
         </div>
@@ -4017,10 +4036,10 @@
         </div>
         <div class="deform-bottom-metric">
           <span>Zoom:</span>
-          <button class="btn-icon" style="width:20px; height:20px; font-size:10px; padding:0;" onclick="DeformEditor.zoomInOut(-0.25)">−</button>
-          <span class="deform-bottom-metric-val" id="def-bar-zoom-label" style="width:38px; text-align:center;">100%</span>
-          <button class="btn-icon" style="width:20px; height:20px; font-size:10px; padding:0;" onclick="DeformEditor.zoomInOut(0.25)">+</button>
-          <button class="btn btn-secondary" style="height:20px; font-size:9px; padding:0 6px;" onclick="DeformEditor.resetZoomAndPan()">Fit</button>
+          <button class="btn-icon deform-zoom-btn" onclick="DeformEditor.zoomInOut(-0.25)">−</button>
+          <span class="deform-bottom-metric-val" id="def-bar-zoom-label" style="width:44px; text-align:center;">100%</span>
+          <button class="btn-icon deform-zoom-btn" onclick="DeformEditor.zoomInOut(0.25)">+</button>
+          <button class="btn btn-secondary deform-fit-btn" onclick="DeformEditor.resetZoomAndPan()">Fit</button>
         </div>
       </div>
     </footer>
@@ -4092,6 +4111,7 @@
     let lastMousePos = { x: 0, y: 0 };
     let controlPointDragging = false, dragPointStartPos = [], dragMouseStartPos = { x: 0, y: 0 };
     let dragMode = null, draggedEdge = null, contextMenuPointId = null;
+    let _isTouchActive = false; // true when last interaction was touch
 
     // Element references (lazy — resolved on first open)
     let workspaceViewport, canvasWrapper, refCanvas, glCanvas, overlayCanvas, welcomeOverlay, ctxMenu;
@@ -4374,6 +4394,56 @@
       });
     }
 
+    // ── Touch drag-and-drop for Deform Layer Stack ────────────────────────────
+    (function setupDeformTouchLayerDrag() {
+      let touchDragId = null, touchDragClone = null, touchDragLastTarget = null;
+
+      function getDeformRowAt(x, y) {
+        if (touchDragClone) touchDragClone.style.display = 'none';
+        const el = document.elementFromPoint(x, y);
+        if (touchDragClone) touchDragClone.style.display = '';
+        return el ? el.closest('#def-layer-list > [data-layer-id]') : null;
+      }
+
+      document.addEventListener('touchstart', (e) => {
+        const row = e.target.closest('#def-layer-list > [data-layer-id]');
+        if (!row || row.style.cursor === 'default') return; // body/locked rows
+        touchDragId = row.dataset.layerId;
+        const rect = row.getBoundingClientRect();
+        touchDragClone = row.cloneNode(true);
+        Object.assign(touchDragClone.style, {
+          position: 'fixed', top: rect.top + 'px', left: rect.left + 'px',
+          width: rect.width + 'px', opacity: '0.75', pointerEvents: 'none',
+          zIndex: '99999', borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.5)'
+        });
+        document.body.appendChild(touchDragClone);
+        row.style.opacity = '0.3';
+        e.stopPropagation(); // don't bubble to warp canvas
+      }, { passive: true });
+
+      document.addEventListener('touchmove', (e) => {
+        if (!touchDragId || !touchDragClone) return;
+        const t = e.touches[0];
+        touchDragClone.style.top  = (t.clientY - 20) + 'px';
+        touchDragClone.style.left = (t.clientX - 60) + 'px';
+        document.querySelectorAll('#def-layer-list > [data-layer-id]').forEach(r => r.style.borderColor = '');
+        const targetRow = getDeformRowAt(t.clientX, t.clientY);
+        if (targetRow && targetRow.dataset.layerId !== touchDragId) {
+          targetRow.style.borderColor = '#10b981';
+          touchDragLastTarget = targetRow.dataset.layerId;
+        } else { touchDragLastTarget = null; }
+      }, { passive: true });
+
+      document.addEventListener('touchend', () => {
+        if (!touchDragId) return;
+        document.querySelectorAll('#def-layer-list > [data-layer-id]').forEach(r => r.style.borderColor = '');
+        if (touchDragClone) { touchDragClone.remove(); touchDragClone = null; }
+        document.querySelectorAll(`#def-layer-list > [data-layer-id="${touchDragId}"]`).forEach(r => r.style.opacity = '');
+        if (touchDragLastTarget) reorderDeformLayer(touchDragId, touchDragLastTarget);
+        touchDragId = null; touchDragLastTarget = null;
+      }, { passive: true });
+    })();
+
     function reorderDeformLayer(draggedId, targetId) {
       const from = _referenceLayerOrder.indexOf(draggedId);
       const to   = _referenceLayerOrder.indexOf(targetId);
@@ -4413,9 +4483,14 @@
       // ── viewport touch state ──────────────────────────────────────────────
       let vpPinchStartDist = null, vpPinchStartZoom = 1, vpPinchStartPan = { x: 0, y: 0 };
       let vpTouchPanning = false, vpTouchLastPos = null;
+      // long-press state for context menu on touch
+      let longPressTimer = null, longPressClientX = 0, longPressClientY = 0;
+      // double-tap state for adding free points
+      let lastTapTime = 0, lastTapX = 0, lastTapY = 0;
 
-      // ── Mouse pan (middle button / space) ─────────────────────────────────
+      // ── Mouse: mark as non-touch ───────────────────────────────────────────
       workspaceViewport.addEventListener('mousedown', (e) => {
+        _isTouchActive = false;
         if (e.button === 1 || spacePressed) {
           middleMouseDown = true; viewportDragging = true;
           lastMousePos = { x: e.clientX, y: e.clientY }; e.preventDefault();
@@ -4429,104 +4504,137 @@
           lastMousePos = { x: e.clientX, y: e.clientY };
           updateZoomAndPanStyles();
         }
+        if (controlPointDragging) handleOverlayMouseMove(e);
       });
       window.addEventListener('mouseup', (e) => {
         if (!isModalOpen()) return;
         if (e.button === 1 || middleMouseDown) { middleMouseDown = false; viewportDragging = false; }
         if (controlPointDragging) handleOverlayMouseUp(e);
       });
-      window.addEventListener('mousemove', (e) => {
-        if (!isModalOpen()) return;
-        if (controlPointDragging) handleOverlayMouseMove(e);
-      });
 
       // ── Mouse wheel zoom ──────────────────────────────────────────────────
       workspaceViewport.addEventListener('wheel', (e) => {
         e.preventDefault();
-        const zoomStep = 0.05, oldZoom = state.zoom;
-        let newZoom = Math.max(0.25, Math.min(4.0, state.zoom + (e.deltaY < 0 ? zoomStep : -zoomStep)));
+        const oldZoom = state.zoom;
+        let newZoom = Math.max(0.25, Math.min(4.0, state.zoom + (e.deltaY < 0 ? 0.05 : -0.05)));
         const rect = workspaceViewport.getBoundingClientRect();
-        const mouseX = e.clientX - rect.left, mouseY = e.clientY - rect.top;
-        state.panOffset.x = mouseX - (mouseX - state.panOffset.x) * (newZoom / oldZoom);
-        state.panOffset.y = mouseY - (mouseY - state.panOffset.y) * (newZoom / oldZoom);
+        const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+        state.panOffset.x = mx - (mx - state.panOffset.x) * (newZoom / oldZoom);
+        state.panOffset.y = my - (my - state.panOffset.y) * (newZoom / oldZoom);
         state.zoom = newZoom; updateZoomAndPanStyles();
       }, { passive: false });
 
-      // ── Touch: 1-finger pan on background, 2-finger pinch-zoom ──────────
-      const VP_BG_TARGETS = new Set(['workspace-viewport','canvas-container','canvas-bg','accessories-wrapper']);
-      function isVPBackground(el) {
-        return !el || VP_BG_TARGETS.has(el.id) || el === workspaceViewport || el === canvasContainer;
+      // ── Warp overlay canvas — mouse ────────────────────────────────────────
+      overlayCanvas.addEventListener('mousedown', handleOverlayMouseDown);
+      overlayCanvas.addEventListener('mousemove', handleOverlayMouseMove);
+      overlayCanvas.addEventListener('dblclick', handleOverlayDoubleClick);
+
+      // ── Helper: show context menu at screen coords ─────────────────────────
+      function showContextMenuAt(clientX, clientY) {
+        if (!state.imageLoaded) return;
+        const mouse = getCanvasCoordinates({ clientX, clientY });
+        const box = state.boundingBox;
+        const activePoints = (state.mode === 'mesh' || state.mode === 'edge') ? state.meshPoints : state.freePoints;
+        const hitR = _isTouchActive ? 32 : 14;
+        let clickedPt = null;
+        for (const pt of activePoints) {
+          if (Math.hypot(mouse.x - (box.x + pt.deformedX), mouse.y - (box.y + pt.deformedY)) <= hitR) { clickedPt = pt; break; }
+        }
+        if (clickedPt) {
+          contextMenuPointId = clickedPt.id;
+          document.getElementById('def-ctx-anchor-text').innerText = clickedPt.isAnchor ? "Remove Anchor Lock" : "Set as Anchor Pin";
+          document.getElementById('def-ctx-anchor-icon').innerText = clickedPt.isAnchor ? "🔓" : "📌";
+          ctxMenu.style.left = `${clientX}px`;
+          ctxMenu.style.top  = `${clientY}px`;
+          ctxMenu.style.display = 'flex';
+        }
+      }
+
+      // ── Warp overlay canvas — touch ────────────────────────────────────────
+      overlayCanvas.addEventListener('touchstart', (e) => {
+        if (!isModalOpen() || e.touches.length !== 1) return;
+        _isTouchActive = true;
+        const t = e.touches[0];
+        // Long-press → context menu (500ms)
+        longPressClientX = t.clientX; longPressClientY = t.clientY;
+        longPressTimer = setTimeout(() => {
+          showContextMenuAt(longPressClientX, longPressClientY);
+          longPressTimer = null;
+        }, 500);
+        handleOverlayMouseDown({ clientX: t.clientX, clientY: t.clientY, button: 0, preventDefault: () => {}, shiftKey: false });
+        e.preventDefault();
+      }, { passive: false });
+
+      overlayCanvas.addEventListener('touchmove', (e) => {
+        if (!isModalOpen() || e.touches.length !== 1) return;
+        // Cancel long-press if finger moved
+        if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+        handleOverlayMouseMove({ clientX: e.touches[0].clientX, clientY: e.touches[0].clientY });
+        e.preventDefault();
+      }, { passive: false });
+
+      overlayCanvas.addEventListener('touchend', (e) => {
+        if (!isModalOpen()) return;
+        if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+        const now = Date.now();
+        const lastT = e.changedTouches[0];
+        // Double-tap → add free point (Free / Puppet mode)
+        if (now - lastTapTime < 350 && Math.hypot(lastT.clientX - lastTapX, lastT.clientY - lastTapY) < 30) {
+          handleOverlayDoubleClick({ clientX: lastT.clientX, clientY: lastT.clientY });
+        }
+        lastTapTime = now; lastTapX = lastT.clientX; lastTapY = lastT.clientY;
+        handleOverlayMouseUp({ button: 0 });
+      }, { passive: true });
+
+      // ── Warp viewport — 1-finger pan on background, 2-finger pinch-zoom ──
+      const DEF_VP_ID = 'def-workspace-viewport';
+      function isDeformVPBackground(el) {
+        return !el || el.id === DEF_VP_ID || el === workspaceViewport;
       }
 
       workspaceViewport.addEventListener('touchstart', (e) => {
+        _isTouchActive = true;
         if (e.touches.length === 2) {
-          // Two-finger pinch-zoom start — cancel any existing 1-finger pan
           vpPinchStartDist = getTouchDistance(e);
           vpPinchStartZoom = state.zoom;
           vpPinchStartPan  = { x: state.panOffset.x, y: state.panOffset.y };
           vpTouchPanning = false; vpTouchLastPos = null;
+          if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
           e.preventDefault();
-        } else if (e.touches.length === 1) {
-          const t = e.touches[0];
-          if (isVPBackground(e.target)) {
-            // 1-finger pan on empty background
-            vpTouchPanning = true;
-            vpTouchLastPos = { x: t.clientX, y: t.clientY };
-            e.preventDefault();
-          }
+        } else if (e.touches.length === 1 && isDeformVPBackground(e.target)) {
+          vpTouchPanning = true;
+          vpTouchLastPos = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+          e.preventDefault();
         }
       }, { passive: false });
 
       workspaceViewport.addEventListener('touchmove', (e) => {
         if (e.touches.length === 2 && vpPinchStartDist !== null) {
-          // Pinch-zoom
-          const dist = getTouchDistance(e);
-          const mid  = getTouchMidpoint(e);
+          const dist = getTouchDistance(e), mid = getTouchMidpoint(e);
           let newZoom = Math.max(0.25, Math.min(4.0, vpPinchStartZoom * (dist / vpPinchStartDist)));
-          const rect  = workspaceViewport.getBoundingClientRect();
-          const midX  = mid.clientX - rect.left, midY = mid.clientY - rect.top;
-          state.panOffset.x = midX - (midX - vpPinchStartPan.x) * (newZoom / vpPinchStartZoom);
-          state.panOffset.y = midY - (midY - vpPinchStartPan.y) * (newZoom / vpPinchStartZoom);
-          state.zoom = newZoom;
+          const rect = workspaceViewport.getBoundingClientRect();
+          const mx = mid.clientX - rect.left, my = mid.clientY - rect.top;
+          state.panOffset.x = mx - (mx - vpPinchStartPan.x) * (newZoom / vpPinchStartZoom);
+          state.panOffset.y = my - (my - vpPinchStartPan.y) * (newZoom / vpPinchStartZoom);
+          state.zoom = newZoom; updateZoomAndPanStyles();
+          e.preventDefault();
+        } else if (e.touches.length === 1 && vpTouchPanning && vpTouchLastPos) {
+          const t = e.touches[0];
+          state.panOffset.x += t.clientX - vpTouchLastPos.x;
+          state.panOffset.y += t.clientY - vpTouchLastPos.y;
+          vpTouchLastPos = { x: t.clientX, y: t.clientY };
           updateZoomAndPanStyles();
           e.preventDefault();
-        } else if (e.touches.length === 1) {
-          const t = e.touches[0];
-          if (vpTouchPanning && vpTouchLastPos) {
-            // 1-finger pan
-            state.panOffset.x += t.clientX - vpTouchLastPos.x;
-            state.panOffset.y += t.clientY - vpTouchLastPos.y;
-            vpTouchLastPos = { x: t.clientX, y: t.clientY };
-            updateZoomAndPanStyles();
-            e.preventDefault();
-          }
+        } else if (e.touches.length === 1 && controlPointDragging) {
+          handleOverlayMouseMove({ clientX: e.touches[0].clientX, clientY: e.touches[0].clientY });
+          e.preventDefault();
         }
       }, { passive: false });
 
       workspaceViewport.addEventListener('touchend', (e) => {
-        if (e.touches.length < 2) { vpPinchStartDist = null; }
+        if (e.touches.length < 2) vpPinchStartDist = null;
         if (e.touches.length === 0) { vpTouchPanning = false; vpTouchLastPos = null; }
-      }, { passive: true });
-
-      // ── Warp tool overlay (mouse) ──────────────────────────────────────────
-      overlayCanvas.addEventListener('mousedown', handleOverlayMouseDown);
-      overlayCanvas.addEventListener('mousemove', handleOverlayMouseMove);
-      overlayCanvas.addEventListener('dblclick', handleOverlayDoubleClick);
-
-      // ── Warp tool overlay (touch) ──────────────────────────────────────────
-      overlayCanvas.addEventListener('touchstart', (e) => {
-        if (!isModalOpen() || e.touches.length !== 1) return;
-        handleOverlayMouseDown({ clientX: e.touches[0].clientX, clientY: e.touches[0].clientY, button: 0, preventDefault: () => {} });
-        e.preventDefault();
-      }, { passive: false });
-      overlayCanvas.addEventListener('touchmove', (e) => {
-        if (!isModalOpen() || e.touches.length !== 1) return;
-        handleOverlayMouseMove({ clientX: e.touches[0].clientX, clientY: e.touches[0].clientY });
-        e.preventDefault();
-      }, { passive: false });
-      overlayCanvas.addEventListener('touchend', (e) => {
-        if (!isModalOpen()) return;
-        handleOverlayMouseUp({ button: 0 });
+        if (controlPointDragging) handleOverlayMouseUp({ button: 0 });
       }, { passive: true });
 
       workspaceViewport.addEventListener('dragover', (e) => e.preventDefault());
@@ -4556,25 +4664,26 @@
       });
     }
 
-    // Context menu listeners (global, guarded)
+    // Context menu — desktop right-click (touch uses long-press inside initViewportControls)
     window.addEventListener('contextmenu', (e) => {
       if (!isModalOpen() || !state.imageLoaded) return;
       const rect = overlayCanvas.getBoundingClientRect();
       if (e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom) {
         e.preventDefault();
+        _isTouchActive = false;
         const mouse = getCanvasCoordinates(e);
         const box = state.boundingBox;
         const activePoints = (state.mode === 'mesh' || state.mode === 'edge') ? state.meshPoints : state.freePoints;
         let clickedPt = null;
         for (const pt of activePoints) {
-          if (Math.hypot(mouse.x - (box.x + pt.deformedX), mouse.y - (box.y + pt.deformedY)) <= 12) { clickedPt = pt; break; }
+          if (Math.hypot(mouse.x - (box.x + pt.deformedX), mouse.y - (box.y + pt.deformedY)) <= 14) { clickedPt = pt; break; }
         }
         if (clickedPt) {
           contextMenuPointId = clickedPt.id;
           document.getElementById('def-ctx-anchor-text').innerText = clickedPt.isAnchor ? "Remove Anchor Lock" : "Set as Anchor Pin";
           document.getElementById('def-ctx-anchor-icon').innerText = clickedPt.isAnchor ? "🔓" : "📌";
           ctxMenu.style.left = `${e.clientX}px`;
-          ctxMenu.style.top = `${e.clientY}px`;
+          ctxMenu.style.top  = `${e.clientY}px`;
           ctxMenu.style.display = 'flex';
         }
       }
@@ -4840,7 +4949,7 @@
       };
     }
     const HANDLE_CURSORS = { tl:'nwse-resize',tm:'ns-resize',tr:'nesw-resize',ml:'ew-resize',mr:'ew-resize',bl:'nesw-resize',bm:'ns-resize',br:'nwse-resize' };
-    function hitTestMoveHandle(mouse, box, threshold=8) {
+    function hitTestMoveHandle(mouse, box, threshold=_isTouchActive?20:10) {
       const hs = getMoveHandles(box);
       for (const id of HANDLE_IDS) {
         const h = hs[id];
@@ -4861,8 +4970,8 @@
         const hs=getMoveHandles(box);
         HANDLE_IDS.forEach(id => {
           const h=hs[id];
-          ctx.fillStyle='#ffffff'; ctx.strokeStyle='#10b981'; ctx.lineWidth=1.5;
-          const sz=7;
+          ctx.fillStyle='#ffffff'; ctx.strokeStyle='#10b981'; ctx.lineWidth=2;
+          const sz=_isTouchActive?18:12;
           ctx.fillRect(h.x-sz/2,h.y-sz/2,sz,sz);
           ctx.strokeRect(h.x-sz/2,h.y-sz/2,sz,sz);
         });
@@ -4911,7 +5020,8 @@
       activePoints.forEach(pt => {
         const absX=box.x+pt.deformedX, absY=box.y+pt.deformedY;
         const isSel=state.selectedPoints.includes(pt.id), isHov=state.hoveredPointId===pt.id;
-        ctx.beginPath(); ctx.arc(absX,absY,isSel?7:5,0,Math.PI*2);
+        const ptR = _isTouchActive ? (isSel?13:10) : (isSel?7:5);
+        ctx.beginPath(); ctx.arc(absX,absY,ptR,0,Math.PI*2);
         ctx.fillStyle=pt.isAnchor?'#ef4444':(isSel?'#34d399':(isHov?'#10b981':'#059669'));
         ctx.strokeStyle='#ffffff'; ctx.lineWidth=1.2; ctx.stroke(); ctx.fill();
         if (pt.isAnchor) { ctx.fillStyle='#ffffff'; ctx.font='8px sans-serif'; ctx.fillText('📌',absX+4,absY-4); }
@@ -4955,8 +5065,9 @@
         return;
       }
       const activePoints=(state.mode==='mesh'||state.mode==='edge')?state.meshPoints:state.freePoints;
+      const hitRadius = _isTouchActive ? 28 : 12;
       let clickedPt=null;
-      for (const pt of activePoints) { if(Math.hypot(mouse.x-(box.x+pt.deformedX),mouse.y-(box.y+pt.deformedY))<=10){clickedPt=pt;break;} }
+      for (const pt of activePoints) { if(Math.hypot(mouse.x-(box.x+pt.deformedX),mouse.y-(box.y+pt.deformedY))<=hitRadius){clickedPt=pt;break;} }
       if (clickedPt) {
         if (clickedPt.isAnchor&&state.mode!=='puppet') return;
         controlPointDragging=true; dragMode='move_points';

@@ -150,13 +150,14 @@
       align-items: center;
       justify-content: center;
       gap: 8px;
-      height: 38px;
+      height: 44px;
       padding: 0 16px;
       border-radius: 8px;
       font-size: 13px;
       font-weight: 600;
       cursor: pointer;
       transition: all var(--transition-fast);
+      touch-action: manipulation;
     }
 
     .btn-primary {
@@ -180,8 +181,8 @@
     }
 
     .btn-icon {
-      width: 38px;
-      height: 38px;
+      width: 44px;
+      height: 44px;
       padding: 0;
       border-radius: 8px;
       background-color: rgba(255, 255, 255, 0.04);
@@ -192,6 +193,7 @@
       align-items: center;
       justify-content: center;
       transition: all var(--transition-fast);
+      touch-action: manipulation;
     }
     .btn-icon:hover:not(:disabled) {
       color: var(--text-main);
@@ -381,6 +383,7 @@
       pointer-events: auto;
       cursor: grab;
       user-select: none;
+      touch-action: none;
     }
     .canvas-accessory.dragging {
       cursor: grabbing;
@@ -459,6 +462,14 @@
       pointer-events: auto;
       touch-action: none;
     }
+    /* Expanded invisible touch hit area for corner handles */
+    .gizmo-handle::after {
+      content: '';
+      position: absolute;
+      top: 50%; left: 50%;
+      width: 44px; height: 44px;
+      transform: translate(-50%, -50%);
+    }
     .transform-gizmo.locked .gizmo-handle {
       border-color: var(--text-muted);
       cursor: not-allowed;
@@ -484,16 +495,25 @@
     }
     .handle-rotate {
       position: absolute;
-      top: -20px;
+      top: -28px;
       left: 50%;
-      width: 10px;
-      height: 10px;
+      width: 22px;
+      height: 22px;
       background-color: #ffffff;
       border: 2px solid var(--accent-green);
       border-radius: 50%;
       transform: translate(-50%, -50%);
       cursor: crosshair;
       box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+      touch-action: none;
+    }
+    /* Expanded invisible touch target for rotate handle */
+    .handle-rotate::after {
+      content: '';
+      position: absolute;
+      top: 50%; left: 50%;
+      width: 44px; height: 44px;
+      transform: translate(-50%, -50%);
     }
     .transform-gizmo.locked .handle-rotate {
       border-color: var(--text-muted);
@@ -545,7 +565,7 @@
     .layer-row {
       display: flex;
       align-items: center;
-      height: 48px;
+      height: 52px;
       padding: 0 12px;
       border-radius: 8px;
       background-color: rgba(255,255,255,0.02);
@@ -554,6 +574,7 @@
       user-select: none;
       transition: all var(--transition-fast);
       position: relative;
+      touch-action: manipulation;
     }
 
     .layer-row:hover {
@@ -645,15 +666,16 @@
     }
 
     .layer-action-btn {
-      width: 24px;
-      height: 24px;
+      width: 36px;
+      height: 36px;
       display: flex;
       align-items: center;
       justify-content: center;
       color: var(--text-muted);
-      border-radius: 4px;
+      border-radius: 6px;
       cursor: pointer;
       transition: all var(--transition-fast);
+      touch-action: manipulation;
     }
     .layer-action-btn:hover {
       color: var(--text-main);
@@ -763,7 +785,7 @@
       align-items: center;
       background-color: rgba(0, 0, 0, 0.2);
       border: 1px solid var(--border-color);
-      height: 36px;
+      height: 44px;
       border-radius: 6px;
       padding: 0 8px;
       transition: border-color var(--transition-fast);
@@ -829,23 +851,34 @@
     input[type="range"] {
       -webkit-appearance: none;
       flex: 1;
-      height: 4px;
-      border-radius: 2px;
+      height: 6px;
+      border-radius: 3px;
       background: var(--border-color);
       outline: none;
+      touch-action: none;
+      cursor: pointer;
     }
     input[type="range"]::-webkit-slider-thumb {
       -webkit-appearance: none;
-      width: 14px;
-      height: 14px;
+      width: 26px;
+      height: 26px;
       border-radius: 50%;
       background: var(--accent-green);
       cursor: pointer;
       transition: transform var(--transition-fast);
-      box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+      box-shadow: 0 1px 4px rgba(0,0,0,0.6);
     }
     input[type="range"]::-webkit-slider-thumb:hover {
-      transform: scale(1.2);
+      transform: scale(1.15);
+    }
+    input[type="range"]::-moz-range-thumb {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: var(--accent-green);
+      cursor: pointer;
+      border: none;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.6);
     }
 
     /* Dropdowns */
@@ -853,13 +886,14 @@
       position: relative;
       background-color: rgba(0, 0, 0, 0.2);
       border: 1px solid var(--border-color);
-      height: 36px;
+      height: 44px;
       border-radius: 6px;
       padding: 0 12px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       cursor: pointer;
+      touch-action: manipulation;
     }
     .select-wrapper select {
       width: 100%;
@@ -887,15 +921,16 @@
       align-items: center;
       justify-content: center;
       gap: 6px;
-      height: 28px;
+      height: 40px;
       font-size: 11px;
       color: var(--text-muted);
-      border-radius: 4px;
+      border-radius: 6px;
       cursor: pointer;
       background-color: rgba(255,255,255,0.02);
       border: 1px solid var(--border-color);
       transition: all var(--transition-fast);
-      margin-top: -6px;
+      margin-top: -2px;
+      touch-action: manipulation;
     }
     .aspect-lock-btn.locked {
       color: var(--accent-green);
@@ -2095,27 +2130,41 @@
         
         container.appendChild(img);
 
-        // Click to select
-        container.addEventListener('mousedown', (e) => {
+        function startAccDrag(clientX, clientY) {
           if (acc.locked) return;
-          e.stopPropagation(); // Avoid canvas deselect
           selectItem(acc.id);
-          
-          // Trigger drag movement
           dragMode = 'move';
           const rect = canvasContainer.getBoundingClientRect();
           dragStartMouse = {
-            x: (e.clientX - rect.left) / state.zoom,
-            y: (e.clientY - rect.top) / state.zoom
+            x: (clientX - rect.left) / state.zoom,
+            y: (clientY - rect.top) / state.zoom
           };
-          dragStartAccState = {
-            x: acc.position.x,
-            y: acc.position.y
-          };
+          dragStartAccState = { x: acc.position.x, y: acc.position.y };
           container.classList.add('dragging');
+        }
+
+        // Mouse: select + drag
+        container.addEventListener('mousedown', (e) => {
+          if (acc.locked) return;
+          e.stopPropagation();
+          startAccDrag(e.clientX, e.clientY);
         });
 
-        // Double click to snap back to anchor
+        // Touch: select + drag
+        container.addEventListener('touchstart', (e) => {
+          if (acc.locked) return;
+          e.stopPropagation();
+          e.preventDefault();
+          startAccDrag(e.touches[0].clientX, e.touches[0].clientY);
+        }, { passive: false });
+
+        // Double tap / dblclick to snap back to anchor
+        let lastTap = 0;
+        container.addEventListener('touchend', (e) => {
+          const now = Date.now();
+          if (now - lastTap < 350) { e.stopPropagation(); resetAccessoryAnchor(acc.id); }
+          lastTap = now;
+        }, { passive: true });
         container.addEventListener('dblclick', (e) => {
           e.stopPropagation();
           resetAccessoryAnchor(acc.id);
@@ -2265,6 +2314,72 @@
         _dragTargetId = null; _dragTargetSide = null;
       });
     }
+
+    // ── Touch drag-and-drop for Layer Stack ───────────────────────────────────
+    (function setupTouchLayerDrag() {
+      let touchDragId = null, touchDragClone = null, touchDragLastTarget = null;
+
+      function getLayerRowAt(x, y) {
+        // Temporarily hide clone so elementFromPoint doesn't hit it
+        if (touchDragClone) touchDragClone.style.display = 'none';
+        const el = document.elementFromPoint(x, y);
+        if (touchDragClone) touchDragClone.style.display = '';
+        if (!el) return null;
+        return el.closest('.layer-row[data-layer-id]');
+      }
+
+      document.addEventListener('touchstart', (e) => {
+        const handle = e.target.closest('.layer-drag-handle');
+        if (!handle) return;
+        const row = handle.closest('.layer-row[data-layer-id]');
+        if (!row) return;
+        touchDragId = row.dataset.layerId;
+
+        // Ghost clone
+        const rect = row.getBoundingClientRect();
+        touchDragClone = row.cloneNode(true);
+        Object.assign(touchDragClone.style, {
+          position: 'fixed', top: rect.top + 'px', left: rect.left + 'px',
+          width: rect.width + 'px', opacity: '0.75', pointerEvents: 'none',
+          zIndex: '99999', background: 'var(--bg-card)', borderRadius: '8px',
+          boxShadow: '0 4px 16px rgba(0,0,0,0.5)'
+        });
+        document.body.appendChild(touchDragClone);
+        row.style.opacity = '0.3';
+        e.preventDefault();
+      }, { passive: false });
+
+      document.addEventListener('touchmove', (e) => {
+        if (!touchDragId || !touchDragClone) return;
+        const t = e.touches[0];
+        touchDragClone.style.top  = (t.clientY - 24) + 'px';
+        touchDragClone.style.left = (t.clientX - 80) + 'px';
+
+        clearStackDragHighlights();
+        const targetRow = getLayerRowAt(t.clientX, t.clientY);
+        if (targetRow && targetRow.dataset.layerId !== touchDragId) {
+          const rect = targetRow.getBoundingClientRect();
+          const side = (t.clientY - rect.top) < rect.height / 2 ? 'top' : 'bottom';
+          targetRow.classList.add(side === 'top' ? 'drag-over-top' : 'drag-over-bottom');
+          touchDragLastTarget = { id: targetRow.dataset.layerId, side };
+        } else {
+          touchDragLastTarget = null;
+        }
+        e.preventDefault();
+      }, { passive: false });
+
+      document.addEventListener('touchend', () => {
+        if (!touchDragId) return;
+        clearStackDragHighlights();
+        if (touchDragClone) { touchDragClone.remove(); touchDragClone = null; }
+        // Restore opacity
+        document.querySelectorAll(`.layer-row[data-layer-id="${touchDragId}"]`).forEach(r => r.style.opacity = '');
+        if (touchDragLastTarget) {
+          reorderLayerStack(touchDragId, touchDragLastTarget.id, touchDragLastTarget.side);
+        }
+        touchDragId = null; touchDragLastTarget = null;
+      }, { passive: true });
+    })();
 
     function reorderLayerStack(draggedId, targetId, side) {
       const draggedIdx = state.layerOrder.indexOf(draggedId);
@@ -4337,57 +4452,60 @@
         state.zoom = newZoom; updateZoomAndPanStyles();
       }, { passive: false });
 
-      // ── Touch: 1-finger pan on viewport background, 2-finger pinch-zoom ──
+      // ── Touch: 1-finger pan on background, 2-finger pinch-zoom ──────────
+      const VP_BG_TARGETS = new Set(['workspace-viewport','canvas-container','canvas-bg','accessories-wrapper']);
+      function isVPBackground(el) {
+        return !el || VP_BG_TARGETS.has(el.id) || el === workspaceViewport || el === canvasContainer;
+      }
+
       workspaceViewport.addEventListener('touchstart', (e) => {
-        if (!isModalOpen()) return;
         if (e.touches.length === 2) {
-          // Pinch zoom start
+          // Two-finger pinch-zoom start — cancel any existing 1-finger pan
           vpPinchStartDist = getTouchDistance(e);
           vpPinchStartZoom = state.zoom;
           vpPinchStartPan  = { x: state.panOffset.x, y: state.panOffset.y };
-          vpTouchPanning   = false;
+          vpTouchPanning = false; vpTouchLastPos = null;
           e.preventDefault();
         } else if (e.touches.length === 1) {
-          // Check if touching the empty viewport (not a gizmo / accessory element)
-          const tag = e.target.tagName;
-          const isVP = e.target === workspaceViewport || e.target === canvasContainer || tag === 'CANVAS';
-          if (isVP) {
-            // Forward to warp tool if active
-            if (isModalOpen()) {
-              handleOverlayMouseDown({ clientX: e.touches[0].clientX, clientY: e.touches[0].clientY, button: 0, preventDefault: () => {} });
-            }
-            vpTouchPanning = false;
+          const t = e.touches[0];
+          if (isVPBackground(e.target)) {
+            // 1-finger pan on empty background
+            vpTouchPanning = true;
+            vpTouchLastPos = { x: t.clientX, y: t.clientY };
+            e.preventDefault();
           }
         }
       }, { passive: false });
 
       workspaceViewport.addEventListener('touchmove', (e) => {
-        if (!isModalOpen()) return;
         if (e.touches.length === 2 && vpPinchStartDist !== null) {
-          // Pinch zoom
+          // Pinch-zoom
           const dist = getTouchDistance(e);
           const mid  = getTouchMidpoint(e);
-          const oldZoom = state.zoom;
           let newZoom = Math.max(0.25, Math.min(4.0, vpPinchStartZoom * (dist / vpPinchStartDist)));
           const rect  = workspaceViewport.getBoundingClientRect();
-          const midX  = mid.clientX - rect.left;
-          const midY  = mid.clientY - rect.top;
+          const midX  = mid.clientX - rect.left, midY = mid.clientY - rect.top;
           state.panOffset.x = midX - (midX - vpPinchStartPan.x) * (newZoom / vpPinchStartZoom);
           state.panOffset.y = midY - (midY - vpPinchStartPan.y) * (newZoom / vpPinchStartZoom);
           state.zoom = newZoom;
           updateZoomAndPanStyles();
           e.preventDefault();
         } else if (e.touches.length === 1) {
-          if (controlPointDragging) {
-            handleOverlayMouseMove({ clientX: e.touches[0].clientX, clientY: e.touches[0].clientY });
+          const t = e.touches[0];
+          if (vpTouchPanning && vpTouchLastPos) {
+            // 1-finger pan
+            state.panOffset.x += t.clientX - vpTouchLastPos.x;
+            state.panOffset.y += t.clientY - vpTouchLastPos.y;
+            vpTouchLastPos = { x: t.clientX, y: t.clientY };
+            updateZoomAndPanStyles();
             e.preventDefault();
           }
         }
       }, { passive: false });
 
       workspaceViewport.addEventListener('touchend', (e) => {
-        if (e.touches.length < 2) { vpPinchStartDist = null; vpTouchPanning = false; }
-        if (controlPointDragging) handleOverlayMouseUp({ button: 0 });
+        if (e.touches.length < 2) { vpPinchStartDist = null; }
+        if (e.touches.length === 0) { vpTouchPanning = false; vpTouchLastPos = null; }
       }, { passive: true });
 
       // ── Warp tool overlay (mouse) ──────────────────────────────────────────

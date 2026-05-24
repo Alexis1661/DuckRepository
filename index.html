@@ -2132,12 +2132,23 @@
       renderAll();
     }
 
+    // Migrate old layer names → new names and add any new BODY_LAYERS missing from saved order
+    function migrateLayerOrder(order) {
+      const rename = { beak_upper: 'upper_beak', beak_lower: 'lower_beak' };
+      let result = order.map(id => rename[id] || id);
+      // Add new body layers that weren't in the old saved state
+      BODY_LAYERS.forEach(layer => {
+        if (!result.includes(layer)) result.unshift(layer);
+      });
+      return result;
+    }
+
     async function loadLocalStorage() {
       try {
         const saved = await API.loadState();
         if (saved && (saved.accessories || saved.layerOrder)) {
           state.accessories = saved.accessories || [];
-          state.layerOrder  = saved.layerOrder  || [...BODY_LAYERS];
+          state.layerOrder  = migrateLayerOrder(saved.layerOrder || [...BODY_LAYERS]);
           historyStack = [{ accessories: JSON.stringify(state.accessories), layerOrder: JSON.stringify(state.layerOrder) }];
           historyIndex = 0;
           updateUndoRedoButtons();
@@ -2178,7 +2189,7 @@
     API.onExternalUpdate((saved) => {
       if (!saved) return;
       state.accessories = saved.accessories || [];
-      state.layerOrder  = saved.layerOrder  || [...BODY_LAYERS];
+      state.layerOrder  = migrateLayerOrder(saved.layerOrder || [...BODY_LAYERS]);
       renderAll();
       console.log('[WS] state synced from another tab');
     });
@@ -4887,16 +4898,24 @@
         if (controlPointDragging) handleOverlayMouseUp(e);
       });
 
-      // ── Mouse wheel zoom ──────────────────────────────────────────────────
+      // ── Mouse wheel: Ctrl+scroll = zoom, plain scroll = pan ──────────────
       workspaceViewport.addEventListener('wheel', (e) => {
         e.preventDefault();
-        const oldZoom = state.zoom;
-        let newZoom = Math.max(0.25, Math.min(4.0, state.zoom + (e.deltaY < 0 ? 0.05 : -0.05)));
-        const rect = workspaceViewport.getBoundingClientRect();
-        const mx = e.clientX - rect.left, my = e.clientY - rect.top;
-        state.panOffset.x = mx - (mx - state.panOffset.x) * (newZoom / oldZoom);
-        state.panOffset.y = my - (my - state.panOffset.y) * (newZoom / oldZoom);
-        state.zoom = newZoom; updateZoomAndPanStyles();
+        if (e.ctrlKey || e.metaKey) {
+          // Zoom centred on cursor
+          const oldZoom = state.zoom;
+          let newZoom = Math.max(0.25, Math.min(4.0, state.zoom + (e.deltaY < 0 ? 0.05 : -0.05)));
+          const rect = workspaceViewport.getBoundingClientRect();
+          const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+          state.panOffset.x = mx - (mx - state.panOffset.x) * (newZoom / oldZoom);
+          state.panOffset.y = my - (my - state.panOffset.y) * (newZoom / oldZoom);
+          state.zoom = newZoom;
+        } else {
+          // Pan the canvas
+          state.panOffset.x -= e.deltaX;
+          state.panOffset.y -= e.deltaY;
+        }
+        updateZoomAndPanStyles();
       }, { passive: false });
 
       // ── Warp overlay canvas — mouse ────────────────────────────────────────

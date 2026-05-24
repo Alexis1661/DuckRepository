@@ -2022,26 +2022,42 @@
     });
 
     // Render static duck parts
+    // Per-body-layer smoothing state: { featherRadius, edgeContract, originalDataUrl, smoothedDataUrl }
+    const bodyLayerSmoothingState = {};
+
     function initBodyLayers() {
       bodyLayersWrapper.innerHTML = '';
       BODY_LAYERS.forEach(layerName => {
-        // Skip right_eye layer image render since there's no asset
         if (layerName === "right_eye") return;
 
         const img = document.createElement('img');
         img.src = `${layerName} [slot]@2x.png`;
         img.className = 'canvas-layer';
         img.dataset.layer = layerName;
-        
-        // Apply edge smoothing on successful load
+
         img.onload = async function() {
-          if (img.style.display !== 'none') {
-            const smoothed = await EdgeSmoother.process(img.src, 1, -0.5);
-            img.src = smoothed;
+          if (img.style.display === 'none') return;
+          // Capture original as data URL before processing (draw via offscreen canvas)
+          const orig = document.createElement('canvas');
+          orig.width = img.naturalWidth; orig.height = img.naturalHeight;
+          orig.getContext('2d').drawImage(img, 0, 0);
+          const originalDataUrl = orig.toDataURL('image/png');
+
+          // Init smoothing state for this layer
+          if (!bodyLayerSmoothingState[layerName]) {
+            bodyLayerSmoothingState[layerName] = { featherRadius: 1, edgeContract: -0.5, originalDataUrl, smoothedDataUrl: null };
+          } else {
+            bodyLayerSmoothingState[layerName].originalDataUrl = originalDataUrl;
           }
+
+          // Apply default smoothing
+          const smoothed = await EdgeSmoother.process(originalDataUrl,
+            bodyLayerSmoothingState[layerName].featherRadius,
+            bodyLayerSmoothingState[layerName].edgeContract);
+          bodyLayerSmoothingState[layerName].smoothedDataUrl = smoothed;
+          img.src = smoothed;
         };
 
-        // Handle load error gracefully
         img.onerror = () => {
           console.warn(`Layer image not found: ${layerName}`);
           img.style.display = 'none';
@@ -3149,6 +3165,40 @@
               </div>
             </div>
           </div>
+
+          ${(()=>{
+            const bs = bodyLayerSmoothingState[state.selectedId];
+            const fr = bs ? bs.featherRadius : 1;
+            const ec = bs ? bs.edgeContract  : -0.5;
+            const ready = bs && bs.originalDataUrl ? '' : 'disabled title="Cargando imagen..."';
+            return `
+          <div class="property-section">
+            <div class="property-section-title">Edge Smoothing</div>
+            ${!bs || !bs.originalDataUrl ? `<p style="font-size:11px;color:var(--text-muted);margin-bottom:10px;">La imagen aún se está cargando. Espera un momento y vuelve a seleccionar la capa.</p>` : ''}
+            <div class="slider-container">
+              <div class="slider-header">
+                <span class="input-label">Feather Radius</span>
+                <span class="slider-val" id="bl-feather-val">${fr}px</span>
+              </div>
+              <div class="slider-wrapper">
+                <input type="range" min="0" max="8" step="0.5" value="${fr}" ${ready}
+                  oninput="document.getElementById('bl-feather-val').textContent=this.value+'px'; updateBodyLayerSmoothing('${state.selectedId}','featherRadius',+this.value)">
+              </div>
+            </div>
+            <div class="slider-container">
+              <div class="slider-header">
+                <span class="input-label">Edge Contract</span>
+                <span class="slider-val" id="bl-contract-val">${ec}px</span>
+              </div>
+              <div class="slider-wrapper">
+                <input type="range" min="-3" max="3" step="0.5" value="${ec}" ${ready}
+                  oninput="document.getElementById('bl-contract-val').textContent=this.value+'px'; updateBodyLayerSmoothing('${state.selectedId}','edgeContract',+this.value)">
+              </div>
+            </div>
+            <button class="btn btn-secondary" id="bl-smooth-btn" style="width:100%;height:36px;font-size:12px;margin-top:6px;" ${ready}
+              onclick="reapplyBodyLayerSmoothing('${state.selectedId}')">↻ Aplicar suavizado</button>
+          </div>`;
+          })()}
         `;
         return;
       }
@@ -3638,6 +3688,27 @@
         renderAll();
       } finally {
         if (btn) { btn.textContent = '↻ Re-apply smoothing'; btn.disabled = false; }
+      }
+    }
+
+    // ── Body layer edge smoothing ────────────────────────────────────────────
+    function updateBodyLayerSmoothing(layerName, key, val) {
+      if (!bodyLayerSmoothingState[layerName]) return;
+      bodyLayerSmoothingState[layerName][key] = val;
+    }
+
+    async function reapplyBodyLayerSmoothing(layerName) {
+      const bs = bodyLayerSmoothingState[layerName];
+      if (!bs || !bs.originalDataUrl) return;
+      const btn = document.getElementById('bl-smooth-btn');
+      if (btn) { btn.textContent = '⏳ Procesando...'; btn.disabled = true; }
+      try {
+        const smoothed = await EdgeSmoother.process(bs.originalDataUrl, bs.featherRadius, bs.edgeContract);
+        bs.smoothedDataUrl = smoothed;
+        const img = bodyLayersWrapper.querySelector(`img[data-layer="${layerName}"]`);
+        if (img) img.src = smoothed;
+      } finally {
+        if (btn) { btn.textContent = '↻ Aplicar suavizado'; btn.disabled = false; }
       }
     }
 

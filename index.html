@@ -2843,6 +2843,48 @@
         saveState();
         renderAll();
       }, { passive: false });
+
+      // ── Main viewport — 1-finger pan + 2-finger pinch-zoom ──────────────────
+      (function setupMainViewportTouch() {
+        let vPanning = false, vLastPos = null;
+        let vPinchDist = null, vPinchZoom = 1;
+
+        workspaceViewport.addEventListener('touchstart', (e) => {
+          if (e.touches.length === 2) {
+            vPinchDist = getTouchDistance(e);
+            vPinchZoom = state.zoom;
+            vPanning = false; vLastPos = null;
+            e.preventDefault();
+          } else if (e.touches.length === 1) {
+            // Only pan if NOT touching an accessory or gizmo handle
+            const el = document.elementFromPoint(e.touches[0].clientX, e.touches[0].clientY);
+            if (el && (el.closest('.canvas-accessory') || el.closest('.transform-gizmo'))) return;
+            vPanning = true;
+            vLastPos = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            e.preventDefault();
+          }
+        }, { passive: false });
+
+        workspaceViewport.addEventListener('touchmove', (e) => {
+          if (e.touches.length === 2 && vPinchDist !== null) {
+            const newZoom = Math.max(0.25, Math.min(3.0, vPinchZoom * (getTouchDistance(e) / vPinchDist)));
+            state.zoom = newZoom;
+            updateZoom();
+            e.preventDefault();
+          } else if (e.touches.length === 1 && vPanning && vLastPos) {
+            const t = e.touches[0];
+            workspaceViewport.scrollLeft -= t.clientX - vLastPos.x;
+            workspaceViewport.scrollTop  -= t.clientY - vLastPos.y;
+            vLastPos = { x: t.clientX, y: t.clientY };
+            e.preventDefault();
+          }
+        }, { passive: false });
+
+        workspaceViewport.addEventListener('touchend', (e) => {
+          if (e.touches.length < 2) vPinchDist = null;
+          if (e.touches.length === 0) { vPanning = false; vLastPos = null; }
+        }, { passive: true });
+      })();
     }
 
     // Keyboard controls
@@ -4375,6 +4417,26 @@
           const thumb = acc && acc.dataUrl ? `<img src="${acc.dataUrl}" style="width:20px;height:20px;object-fit:contain;border-radius:3px;">` : '<span style="font-size:10px;">🖼️</span>';
           const label = acc ? (acc.name||acc.id) : id;
           row.innerHTML=`<span style="font-size:10px;cursor:grab;opacity:0.5;">☰</span>${thumb}<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${label}</span>`;
+          // Delete button
+          const delBtn = document.createElement('button');
+          delBtn.textContent = '×';
+          delBtn.title = 'Eliminar accesorio';
+          delBtn.style.cssText = 'background:rgba(248,113,113,0.15);border:none;color:#f87171;width:28px;height:28px;min-width:28px;border-radius:5px;cursor:pointer;font-size:16px;line-height:1;display:flex;align-items:center;justify-content:center;flex-shrink:0;touch-action:manipulation;';
+          const doDelete = (ev) => {
+            ev.stopPropagation();
+            // Remove from deform reference lists
+            const ri = _referenceAccessories.findIndex(a => a.id === id);
+            if (ri >= 0) _referenceAccessories.splice(ri, 1);
+            const oi = _referenceLayerOrder.indexOf(id);
+            if (oi >= 0) _referenceLayerOrder.splice(oi, 1);
+            renderDeformLayerList();
+            drawReferenceLayer();
+            // Also remove from main editor
+            deleteAccessory(null, id);
+          };
+          delBtn.addEventListener('click', doDelete);
+          delBtn.addEventListener('touchend', (ev) => { ev.preventDefault(); doDelete(ev); }, { passive: false });
+          row.appendChild(delBtn);
           // Drag to reorder
           row.draggable = true;
           row.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', id); row.style.opacity='0.4'; });

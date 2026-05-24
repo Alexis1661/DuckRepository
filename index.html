@@ -1485,6 +1485,10 @@
         🔧 Warp Tool
       </button>
 
+      <button class="btn btn-secondary" onclick="smoothAllAccessories()" id="btn-smooth-all" title="Apply edge smoothing to all accessories">
+        ✨ Smooth all
+      </button>
+
       <div class="toolbar-separator"></div>
 
       <!-- Undo / Redo -->
@@ -1755,6 +1759,86 @@
     })();
 
     // ==========================================
+    // EDGE SMOOTHER MODULE
+    // ==========================================
+    const EdgeSmoother = (() => {
+      const _cache = new Map();
+
+      async function process(srcDataURL, featherRadius = 1, edgeContract = -0.5) {
+        const cacheKey = `${srcDataURL}_r${featherRadius}_c${edgeContract}`;
+        if (_cache.has(cacheKey)) return _cache.get(cacheKey);
+
+        return new Promise((resolve) => {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width  = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const data = imageData.data;
+            const W = canvas.width, H = canvas.height;
+
+            // Identify edge pixels first (read-only pass)
+            const isEdge = new Uint8Array(W * H);
+            for (let y = 0; y < H; y++) {
+              for (let x = 0; x < W; x++) {
+                const idx = (y * W + x) * 4;
+                const alpha = data[idx + 3];
+                if (alpha <= 10) continue; // transparent pixel — skip
+                // Check 3x3 neighbors
+                let foundTransparentNeighbor = false;
+                outer: for (let dy = -1; dy <= 1; dy++) {
+                  for (let dx = -1; dx <= 1; dx++) {
+                    if (dx === 0 && dy === 0) continue;
+                    const nx = x + dx, ny = y + dy;
+                    if (nx < 0 || nx >= W || ny < 0 || ny >= H) {
+                      foundTransparentNeighbor = true; break outer;
+                    }
+                    const nIdx = (ny * W + nx) * 4;
+                    if (data[nIdx + 3] < 50) { foundTransparentNeighbor = true; break outer; }
+                  }
+                }
+                if (foundTransparentNeighbor) isEdge[y * W + x] = 1;
+              }
+            }
+
+            // Feather pass (write)
+            for (let y = 0; y < H; y++) {
+              for (let x = 0; x < W; x++) {
+                if (!isEdge[y * W + x]) continue;
+                const idx = (y * W + x) * 4;
+                let alpha = data[idx + 3];
+                // Feather: blend alpha toward 0
+                const featherReduction = (1 - alpha / 255) * featherRadius * 0.4 * 255;
+                alpha = Math.max(0, alpha - featherReduction);
+                // Edge contract (erosion)
+                if (edgeContract < 0) {
+                  alpha = Math.max(0, alpha - Math.abs(edgeContract) * 30);
+                }
+                data[idx + 3] = alpha;
+              }
+            }
+
+            ctx.putImageData(imageData, 0, 0);
+            const result = canvas.toDataURL('image/png');
+            _cache.set(cacheKey, result);
+            resolve(result);
+          };
+          img.onerror = () => resolve(srcDataURL); // fallback: return original
+          img.src = srcDataURL;
+        });
+      }
+
+      function clearCache() { _cache.clear(); }
+      function getCached(key) { return _cache.has(key) ? _cache.get(key) : null; }
+
+      return { process, clearCache, getCached };
+    })();
+
+    // ==========================================
     // HARDCODED MANIFEST DATA (From manifest.json)
     // ==========================================
     const MANIFEST = {
@@ -1949,12 +2033,20 @@
         img.className = 'canvas-layer';
         img.dataset.layer = layerName;
         
+        // Apply edge smoothing on successful load
+        img.onload = async function() {
+          if (img.style.display !== 'none') {
+            const smoothed = await EdgeSmoother.process(img.src, 1, -0.5);
+            img.src = smoothed;
+          }
+        };
+
         // Handle load error gracefully
         img.onerror = () => {
           console.warn(`Layer image not found: ${layerName}`);
           img.style.display = 'none';
         };
-        
+
         bodyLayersWrapper.appendChild(img);
       });
     }
@@ -1970,7 +2062,12 @@
 
     function _buildFullSavePayload() {
       return {
-        accessories: state.accessories,
+        accessories: state.accessories.map(a => {
+          const { edgeSmoothing: es, ...rest } = a;
+          return es
+            ? { ...rest, edgeSmoothing: { featherRadius: es.featherRadius, edgeContract: es.edgeContract } }
+            : rest;
+        }),
         layerOrder:  state.layerOrder,
         // Include DeformEditor state if it has been initialized
         warpTool: (typeof DeformEditor !== 'undefined' && DeformEditor.getStateForSave)
@@ -2165,10 +2262,10 @@
         container.style.opacity = acc.opacity;
 
         const img = document.createElement('img');
-        img.src = acc.dataUrl || acc.file;
+        img.src = acc.edgeSmoothing?.smoothedDataUrl || acc.dataUrl || acc.file;
         img.className = 'accessory-img';
         img.style.pointerEvents = 'none';
-        
+
         container.appendChild(img);
 
         function startAccDrag(clientX, clientY) {
@@ -3160,6 +3257,35 @@
         </div>
 
         <div class="property-section">
+          <div class="property-section-title">Edge Smoothing</div>
+
+          <div class="slider-container">
+            <div class="slider-header">
+              <span class="input-label">Feather Radius</span>
+              <span class="slider-val" id="es-feather-val">${acc.edgeSmoothing?.featherRadius ?? 1}px</span>
+            </div>
+            <div class="slider-wrapper">
+              <input type="range" min="0" max="8" step="0.5" value="${acc.edgeSmoothing?.featherRadius ?? 1}"
+                oninput="updateEdgeSmoothing('${acc.id}','featherRadius',+this.value); document.getElementById('es-feather-val').textContent=this.value+'px'">
+            </div>
+          </div>
+
+          <div class="slider-container">
+            <div class="slider-header">
+              <span class="input-label">Edge Contract</span>
+              <span class="slider-val" id="es-contract-val">${acc.edgeSmoothing?.edgeContract ?? -0.5}px</span>
+            </div>
+            <div class="slider-wrapper">
+              <input type="range" min="-3" max="3" step="0.5" value="${acc.edgeSmoothing?.edgeContract ?? -0.5}"
+                oninput="updateEdgeSmoothing('${acc.id}','edgeContract',+this.value); document.getElementById('es-contract-val').textContent=this.value+'px'">
+            </div>
+          </div>
+
+          <button class="btn btn-secondary" style="width:100%;height:34px;font-size:12px;margin-top:6px;"
+            onclick="reapplyEdgeSmoothing('${acc.id}')">↻ Re-apply smoothing</button>
+        </div>
+
+        <div class="property-section">
           <div class="property-section-title">Quick Actions</div>
           <button class="btn btn-secondary" onclick="toggleAccFlipX('${acc.id}')" style="width:100%; height:34px; margin-bottom:10px;">
             Flip Horizontal (${acc.flipX ? 'Flipped' : 'Normal'})
@@ -3478,6 +3604,43 @@
       renderAll();
     }
 
+    async function smoothAllAccessories() {
+      const btn = document.getElementById('btn-smooth-all');
+      if (btn) { btn.textContent = '⏳ Processing...'; btn.disabled = true; }
+      for (const acc of state.accessories) {
+        if (!acc.dataUrl) continue;
+        if (!acc.edgeSmoothing) acc.edgeSmoothing = { featherRadius: 1, edgeContract: -0.5, smoothedDataUrl: null };
+        acc.edgeSmoothing.smoothedDataUrl = await EdgeSmoother.process(acc.dataUrl, acc.edgeSmoothing.featherRadius, acc.edgeSmoothing.edgeContract);
+      }
+      saveState();
+      renderAll();
+      if (btn) { btn.textContent = '✨ Smooth all'; btn.disabled = false; }
+    }
+
+    function updateEdgeSmoothing(accId, key, val) {
+      const acc = state.accessories.find(a => a.id === accId);
+      if (!acc) return;
+      if (!acc.edgeSmoothing) acc.edgeSmoothing = { featherRadius: 1, edgeContract: -0.5, smoothedDataUrl: null };
+      acc.edgeSmoothing[key] = val;
+      // Don't re-apply immediately on slider drag — wait for re-apply button
+    }
+
+    async function reapplyEdgeSmoothing(accId) {
+      const acc = state.accessories.find(a => a.id === accId);
+      if (!acc) return;
+      if (!acc.edgeSmoothing) acc.edgeSmoothing = { featherRadius: 1, edgeContract: -0.5, smoothedDataUrl: null };
+      const btn = document.querySelector(`[onclick*="reapplyEdgeSmoothing('${accId}')"]`);
+      if (btn) { btn.textContent = '⏳ Processing...'; btn.disabled = true; }
+      try {
+        const smoothed = await EdgeSmoother.process(acc.dataUrl, acc.edgeSmoothing.featherRadius, acc.edgeSmoothing.edgeContract);
+        acc.edgeSmoothing.smoothedDataUrl = smoothed;
+        saveState();
+        renderAll();
+      } finally {
+        if (btn) { btn.textContent = '↻ Re-apply smoothing'; btn.disabled = false; }
+      }
+    }
+
     // ==========================================
     // EXTERNAL FILE LOADER SYSTEM
     // ==========================================
@@ -3516,14 +3679,22 @@
               visible: true,
               width: img.naturalWidth || 300,
               height: img.naturalHeight || 300,
-              dataUrl: dataUrl
+              dataUrl: dataUrl,
+              edgeSmoothing: { featherRadius: 1, edgeContract: -0.5, smoothedDataUrl: null }
             };
 
             state.accessories.push(newAcc);
-            
+
             // Put on top of stack
             state.layerOrder.push(accId);
-            
+
+            // Apply edge smoothing immediately
+            EdgeSmoother.process(dataUrl, 1, -0.5).then(smoothed => {
+              newAcc.edgeSmoothing.smoothedDataUrl = smoothed;
+              saveState();
+              renderAll();
+            });
+
             loadedCount++;
             if (loadedCount === files.length) {
               recalculateZIndices();
@@ -3580,12 +3751,20 @@
               visible: true,
               width: img.naturalWidth || 300,
               height: img.naturalHeight || 300,
-              dataUrl: dataUrl
+              dataUrl: dataUrl,
+              edgeSmoothing: { featherRadius: 1, edgeContract: -0.5, smoothedDataUrl: null }
             };
 
             state.accessories.push(newAcc);
             state.layerOrder.push(accId);
-            
+
+            // Apply edge smoothing immediately
+            EdgeSmoother.process(dataUrl, 1, -0.5).then(smoothed => {
+              newAcc.edgeSmoothing.smoothedDataUrl = smoothed;
+              saveState();
+              renderAll();
+            });
+
             loadedCount++;
             if (loadedCount === pngs.length) {
               recalculateZIndices();
@@ -4262,7 +4441,7 @@
       const fsSource = `
         precision mediump float;
         varying vec2 v_texcoord; varying float v_strain;
-        uniform sampler2D u_image; uniform float u_opacity;
+        uniform sampler2D u_image; uniform float u_opacity; uniform float u_edgeFeather;
         void main() {
           vec4 color = texture2D(u_image, v_texcoord);
           if (color.a <= 0.0) { gl_FragColor = color; return; }
@@ -4274,7 +4453,9 @@
             float mixFactor = min(0.35, (v_strain - 0.02) * 1.5);
             color.rgb = mix(color.rgb, tintColor, mixFactor);
           }
-          gl_FragColor = color * u_opacity;
+          // Soft edge: feather near alpha=0 boundary using alpha itself as coverage
+          float coverage = smoothstep(0.0, u_edgeFeather / 255.0 + 0.004, color.a);
+          gl_FragColor = vec4(color.rgb, color.a * coverage) * u_opacity;
         }`;
       const vs = compileShader(gl.VERTEX_SHADER, vsSource);
       const fs = compileShader(gl.FRAGMENT_SHADER, fsSource);
@@ -4293,12 +4474,13 @@
       // Cache attribute/uniform locations — looked up ONCE, never per-frame
       gl.useProgram(shaderProgram);
       _glLoc = {
-        pos:    gl.getAttribLocation(shaderProgram,  'a_position'),
-        tex:    gl.getAttribLocation(shaderProgram,  'a_texcoord'),
-        strain: gl.getAttribLocation(shaderProgram,  'a_strain'),
-        uRes:   gl.getUniformLocation(shaderProgram, 'u_resolution'),
-        uOp:    gl.getUniformLocation(shaderProgram, 'u_opacity'),
-        uImg:   gl.getUniformLocation(shaderProgram, 'u_image'),
+        pos:          gl.getAttribLocation(shaderProgram,  'a_position'),
+        tex:          gl.getAttribLocation(shaderProgram,  'a_texcoord'),
+        strain:       gl.getAttribLocation(shaderProgram,  'a_strain'),
+        uRes:         gl.getUniformLocation(shaderProgram, 'u_resolution'),
+        uOp:          gl.getUniformLocation(shaderProgram, 'u_opacity'),
+        uImg:         gl.getUniformLocation(shaderProgram, 'u_image'),
+        uEdgeFeather: gl.getUniformLocation(shaderProgram, 'u_edgeFeather'),
       };
     }
 
@@ -5042,6 +5224,7 @@
       gl.uniform1f(_glLoc.uOp,1.0);
       gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,texture);
       gl.uniform1i(_glLoc.uImg,0);
+      gl.uniform1f(_glLoc.uEdgeFeather, 4.0);
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,glBuffers.index);
       gl.drawElements(gl.TRIANGLES,denseGridIndices.length,gl.UNSIGNED_SHORT,0);
     }

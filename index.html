@@ -282,6 +282,7 @@
       align-items: flex-start;
       justify-content: flex-start;
       padding: 60px;
+      touch-action: none;
     }
 
     /* Rulers container */
@@ -440,6 +441,7 @@
       z-index: 999;
       box-shadow: 0 0 0 1px rgba(0,0,0,0.5), 0 8px 24px rgba(0,0,0,0.25);
       cursor: move;
+      touch-action: none;
     }
     .transform-gizmo.locked {
       border-color: var(--text-muted);
@@ -447,14 +449,15 @@
     
     .gizmo-handle {
       position: absolute;
-      width: 10px;
-      height: 10px;
+      width: 22px;
+      height: 22px;
       background-color: #ffffff;
       border: 2px solid var(--accent-green);
-      border-radius: 2px;
+      border-radius: 4px;
       box-shadow: 0 1px 3px rgba(0,0,0,0.5);
       cursor: pointer;
       pointer-events: auto;
+      touch-action: none;
     }
     .transform-gizmo.locked .gizmo-handle {
       border-color: var(--text-muted);
@@ -2530,148 +2533,178 @@
       updateBodyHighlightBelow();
     }
 
+    // ── Touch/Pointer helper ──────────────────────────────────────────────────
+    function getEventPoint(e) {
+      if (e.touches && e.touches.length > 0) return { clientX: e.touches[0].clientX, clientY: e.touches[0].clientY };
+      if (e.changedTouches && e.changedTouches.length > 0) return { clientX: e.changedTouches[0].clientX, clientY: e.changedTouches[0].clientY };
+      return { clientX: e.clientX, clientY: e.clientY };
+    }
+    function getTouchDistance(e) {
+      if (e.touches && e.touches.length >= 2) {
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        return Math.hypot(dx, dy);
+      }
+      return null;
+    }
+    function getTouchMidpoint(e) {
+      if (e.touches && e.touches.length >= 2) {
+        return {
+          clientX: (e.touches[0].clientX + e.touches[1].clientX) / 2,
+          clientY: (e.touches[0].clientY + e.touches[1].clientY) / 2
+        };
+      }
+      return null;
+    }
+
     function setupGizmoMouseListeners() {
-      // Dragging the GIZMO BODY moves the accessory
-      transformGizmo.addEventListener('mousedown', (e) => {
-        // Only if clicking directly on the gizmo (not a child handle)
-        if (e.target !== transformGizmo) return;
+      // ── Pinch-to-scale state ─────────────────────────────────────────────
+      let pinchStartDist = null, pinchStartScaleX = 1, pinchStartScaleY = 1;
+
+      function startGizmoDrag(e, target) {
+        const pt = getEventPoint(e);
         const acc = state.accessories.find(a => a.id === state.selectedId);
         if (!acc || acc.locked) return;
         e.stopPropagation();
-        dragMode = 'move';
+
+        // Detect if it's a handle or the gizmo body
+        const handle = target.closest('.gizmo-handle');
+        dragMode = handle ? handle.dataset.handle : (target === transformGizmo ? 'move' : null);
+        if (!dragMode) return;
+
         const rect = canvasContainer.getBoundingClientRect();
         dragStartMouse = {
-          x: (e.clientX - rect.left) / state.zoom,
-          y: (e.clientY - rect.top) / state.zoom
+          x: (pt.clientX - rect.left) / state.zoom,
+          y: (pt.clientY - rect.top) / state.zoom
         };
-        dragStartAccState = { x: acc.position.x, y: acc.position.y };
-        transformGizmo.style.cursor = 'grabbing';
+        dragStartAccState = {
+          scaleX: acc.scale.x, scaleY: acc.scale.y,
+          rotation: acc.rotation,
+          x: acc.position.x, y: acc.position.y
+        };
+        if (dragMode === 'move') transformGizmo.style.cursor = 'grabbing';
+      }
+
+      // Dragging the GIZMO BODY moves the accessory
+      transformGizmo.addEventListener('mousedown', (e) => {
+        if (e.target !== transformGizmo) return;
+        startGizmoDrag(e, transformGizmo);
       });
+      transformGizmo.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 2) {
+          // Pinch start on gizmo body
+          const acc = state.accessories.find(a => a.id === state.selectedId);
+          if (!acc || acc.locked) return;
+          pinchStartDist = getTouchDistance(e);
+          pinchStartScaleX = acc.scale.x;
+          pinchStartScaleY = acc.scale.y;
+          dragMode = null;
+          e.preventDefault();
+          return;
+        }
+        if (e.target !== transformGizmo) return;
+        startGizmoDrag(e, transformGizmo);
+        e.preventDefault();
+      }, { passive: false });
 
       // Handles
       const handles = transformGizmo.querySelectorAll('.gizmo-handle');
-
       handles.forEach(handle => {
         handle.addEventListener('mousedown', (e) => {
           e.stopPropagation();
-          const acc = state.accessories.find(a => a.id === state.selectedId);
-          if (!acc || acc.locked) return;
-
-          dragMode = handle.dataset.handle;
-          const rect = canvasContainer.getBoundingClientRect();
-
-          dragStartMouse = {
-            x: (e.clientX - rect.left) / state.zoom,
-            y: (e.clientY - rect.top) / state.zoom
-          };
-
-          dragStartAccState = {
-            scaleX: acc.scale.x,
-            scaleY: acc.scale.y,
-            rotation: acc.rotation,
-            x: acc.position.x,
-            y: acc.position.y
-          };
+          startGizmoDrag(e, handle);
         });
+        handle.addEventListener('touchstart', (e) => {
+          e.stopPropagation();
+          startGizmoDrag(e, handle);
+          e.preventDefault();
+        }, { passive: false });
       });
 
-      // Global MouseMove and MouseUp listeners
-      window.addEventListener('mousemove', (e) => {
+      function applyGizmoDrag(clientX, clientY) {
         if (!dragMode || !state.selectedId) return;
-
         const acc = state.accessories.find(a => a.id === state.selectedId);
         if (!acc || acc.locked) return;
-
         const rect = canvasContainer.getBoundingClientRect();
         const currentMouse = {
-          x: (e.clientX - rect.left) / state.zoom,
-          y: (e.clientY - rect.top) / state.zoom
+          x: (clientX - rect.left) / state.zoom,
+          y: (clientY - rect.top) / state.zoom
         };
-
         const center = { x: acc.position.x, y: acc.position.y };
 
         if (dragMode === 'move') {
-          // Delta
-          const dx = currentMouse.x - dragStartMouse.x;
-          const dy = currentMouse.y - dragStartMouse.y;
-          
-          let newX = dragStartAccState.x + dx;
-          let newY = dragStartAccState.y + dy;
-
-          // Snap to Grid
+          let newX = dragStartAccState.x + (currentMouse.x - dragStartMouse.x);
+          let newY = dragStartAccState.y + (currentMouse.y - dragStartMouse.y);
           if (state.snapToGrid) {
             newX = Math.round(newX / state.gridSize) * state.gridSize;
             newY = Math.round(newY / state.gridSize) * state.gridSize;
           }
-
           acc.position.x = newX;
           acc.position.y = newY;
-          
         } else if (dragMode === 'rotate') {
-          // Drag math relative to center
           const angleStart = Math.atan2(dragStartMouse.y - center.y, dragStartMouse.x - center.x);
           const angleCurrent = Math.atan2(currentMouse.y - center.y, currentMouse.x - center.x);
-          
-          const deltaRad = angleCurrent - angleStart;
-          const deltaDeg = (deltaRad * 180) / Math.PI;
-          
-          let newRot = dragStartAccState.rotation + deltaDeg;
-          
-          // Clamp rotation between -180 and 180 degrees
+          let newRot = dragStartAccState.rotation + (angleCurrent - angleStart) * 180 / Math.PI;
           newRot = ((newRot + 180) % 360 + 360) % 360 - 180;
-
-          if (state.snapToGrid) {
-            newRot = Math.round(newRot / 15) * 15; // Snaps to 15 degrees in grid mode
-          }
-
+          if (state.snapToGrid) newRot = Math.round(newRot / 15) * 15;
           acc.rotation = newRot;
-
         } else if (dragMode.startsWith('scale')) {
-          // Distance based scaling relative to center
           const dStart = Math.hypot(dragStartMouse.x - center.x, dragStartMouse.y - center.y);
-          const dCurr = Math.hypot(currentMouse.x - center.x, currentMouse.y - center.y);
-          
-          let scaleMultiplier = dStart > 0.01 ? (dCurr / dStart) : 1;
-          
-          let newScaleX = dragStartAccState.scaleX * scaleMultiplier;
-          let newScaleY = dragStartAccState.scaleY * scaleMultiplier;
-          
-          // Guard minimum and maximum scale bounds
-          newScaleX = Math.max(0.1, Math.min(3.0, newScaleX));
-          newScaleY = Math.max(0.1, Math.min(3.0, newScaleY));
-
-          acc.scale.x = newScaleX;
-          acc.scale.y = newScaleY;
+          const dCurr  = Math.hypot(currentMouse.x - center.x, currentMouse.y - center.y);
+          const mult = dStart > 0.01 ? dCurr / dStart : 1;
+          acc.scale.x = Math.max(0.1, Math.min(3.0, dragStartAccState.scaleX * mult));
+          acc.scale.y = Math.max(0.1, Math.min(3.0, dragStartAccState.scaleY * mult));
         }
-
         renderAll();
-      });
+      }
 
-      window.addEventListener('mouseup', () => {
-        if (dragMode) {
+      function endGizmoDrag() {
+        if (dragMode || pinchStartDist !== null) {
           dragMode = null;
+          pinchStartDist = null;
           transformGizmo.style.cursor = 'move';
           const draggingAcc = document.querySelector('.canvas-accessory.dragging');
           if (draggingAcc) draggingAcc.classList.remove('dragging');
           saveState();
         }
-      });
+      }
 
-      // Mouse scroll wheel scale
+      // Global MouseMove / MouseUp
+      window.addEventListener('mousemove', (e) => { applyGizmoDrag(e.clientX, e.clientY); });
+      window.addEventListener('mouseup', endGizmoDrag);
+
+      // Global TouchMove / TouchEnd
+      window.addEventListener('touchmove', (e) => {
+        if (e.touches.length === 2) {
+          // Pinch-to-scale
+          const acc = state.accessories.find(a => a.id === state.selectedId);
+          if (!acc || acc.locked || pinchStartDist === null) return;
+          const dist = getTouchDistance(e);
+          const ratio = dist / pinchStartDist;
+          acc.scale.x = Math.max(0.1, Math.min(3.0, pinchStartScaleX * ratio));
+          acc.scale.y = Math.max(0.1, Math.min(3.0, pinchStartScaleY * ratio));
+          renderAll();
+          e.preventDefault();
+          return;
+        }
+        if (!dragMode) return;
+        const pt = getEventPoint(e);
+        applyGizmoDrag(pt.clientX, pt.clientY);
+        e.preventDefault();
+      }, { passive: false });
+
+      window.addEventListener('touchend', endGizmoDrag, { passive: true });
+      window.addEventListener('touchcancel', endGizmoDrag, { passive: true });
+
+      // Mouse scroll wheel scale (desktop)
       canvasContainer.addEventListener('wheel', (e) => {
         if (!state.selectedId || BODY_LAYERS.includes(state.selectedId)) return;
         const acc = state.accessories.find(a => a.id === state.selectedId);
         if (!acc || acc.locked) return;
-
         e.preventDefault();
-        
-        const scaleDelta = e.deltaY < 0 ? 0.05 : -0.05;
-        let newX = acc.scale.x + scaleDelta;
-        let newY = acc.scale.y + scaleDelta;
-
-        acc.scale.x = Math.max(0.1, Math.min(3.0, newX));
-        acc.scale.y = Math.max(0.1, Math.min(3.0, newY));
-        
+        const delta = e.deltaY < 0 ? 0.05 : -0.05;
+        acc.scale.x = Math.max(0.1, Math.min(3.0, acc.scale.x + delta));
+        acc.scale.y = Math.max(0.1, Math.min(3.0, acc.scale.y + delta));
         saveState();
         renderAll();
       }, { passive: false });
@@ -4262,6 +4295,11 @@
     // VIEWPORT CONTROLS
     // ==========================================
     function initViewportControls() {
+      // ── viewport touch state ──────────────────────────────────────────────
+      let vpPinchStartDist = null, vpPinchStartZoom = 1, vpPinchStartPan = { x: 0, y: 0 };
+      let vpTouchPanning = false, vpTouchLastPos = null;
+
+      // ── Mouse pan (middle button / space) ─────────────────────────────────
       workspaceViewport.addEventListener('mousedown', (e) => {
         if (e.button === 1 || spacePressed) {
           middleMouseDown = true; viewportDragging = true;
@@ -4277,17 +4315,17 @@
           updateZoomAndPanStyles();
         }
       });
-      // mouseup on WINDOW so releasing outside the canvas always stops the drag
       window.addEventListener('mouseup', (e) => {
         if (!isModalOpen()) return;
         if (e.button === 1 || middleMouseDown) { middleMouseDown = false; viewportDragging = false; }
-        if (controlPointDragging) handleOverlayMouseUp(e); // stop scale/move/point drag
+        if (controlPointDragging) handleOverlayMouseUp(e);
       });
-      // mousemove on WINDOW so dragging outside the canvas keeps working
       window.addEventListener('mousemove', (e) => {
         if (!isModalOpen()) return;
-        if (controlPointDragging) handleOverlayMouseMove(e); // continue drag outside canvas
+        if (controlPointDragging) handleOverlayMouseMove(e);
       });
+
+      // ── Mouse wheel zoom ──────────────────────────────────────────────────
       workspaceViewport.addEventListener('wheel', (e) => {
         e.preventDefault();
         const zoomStep = 0.05, oldZoom = state.zoom;
@@ -4297,11 +4335,82 @@
         state.panOffset.x = mouseX - (mouseX - state.panOffset.x) * (newZoom / oldZoom);
         state.panOffset.y = mouseY - (mouseY - state.panOffset.y) * (newZoom / oldZoom);
         state.zoom = newZoom; updateZoomAndPanStyles();
-      });
+      }, { passive: false });
+
+      // ── Touch: 1-finger pan on viewport background, 2-finger pinch-zoom ──
+      workspaceViewport.addEventListener('touchstart', (e) => {
+        if (!isModalOpen()) return;
+        if (e.touches.length === 2) {
+          // Pinch zoom start
+          vpPinchStartDist = getTouchDistance(e);
+          vpPinchStartZoom = state.zoom;
+          vpPinchStartPan  = { x: state.panOffset.x, y: state.panOffset.y };
+          vpTouchPanning   = false;
+          e.preventDefault();
+        } else if (e.touches.length === 1) {
+          // Check if touching the empty viewport (not a gizmo / accessory element)
+          const tag = e.target.tagName;
+          const isVP = e.target === workspaceViewport || e.target === canvasContainer || tag === 'CANVAS';
+          if (isVP) {
+            // Forward to warp tool if active
+            if (isModalOpen()) {
+              handleOverlayMouseDown({ clientX: e.touches[0].clientX, clientY: e.touches[0].clientY, button: 0, preventDefault: () => {} });
+            }
+            vpTouchPanning = false;
+          }
+        }
+      }, { passive: false });
+
+      workspaceViewport.addEventListener('touchmove', (e) => {
+        if (!isModalOpen()) return;
+        if (e.touches.length === 2 && vpPinchStartDist !== null) {
+          // Pinch zoom
+          const dist = getTouchDistance(e);
+          const mid  = getTouchMidpoint(e);
+          const oldZoom = state.zoom;
+          let newZoom = Math.max(0.25, Math.min(4.0, vpPinchStartZoom * (dist / vpPinchStartDist)));
+          const rect  = workspaceViewport.getBoundingClientRect();
+          const midX  = mid.clientX - rect.left;
+          const midY  = mid.clientY - rect.top;
+          state.panOffset.x = midX - (midX - vpPinchStartPan.x) * (newZoom / vpPinchStartZoom);
+          state.panOffset.y = midY - (midY - vpPinchStartPan.y) * (newZoom / vpPinchStartZoom);
+          state.zoom = newZoom;
+          updateZoomAndPanStyles();
+          e.preventDefault();
+        } else if (e.touches.length === 1) {
+          if (controlPointDragging) {
+            handleOverlayMouseMove({ clientX: e.touches[0].clientX, clientY: e.touches[0].clientY });
+            e.preventDefault();
+          }
+        }
+      }, { passive: false });
+
+      workspaceViewport.addEventListener('touchend', (e) => {
+        if (e.touches.length < 2) { vpPinchStartDist = null; vpTouchPanning = false; }
+        if (controlPointDragging) handleOverlayMouseUp({ button: 0 });
+      }, { passive: true });
+
+      // ── Warp tool overlay (mouse) ──────────────────────────────────────────
       overlayCanvas.addEventListener('mousedown', handleOverlayMouseDown);
-      overlayCanvas.addEventListener('mousemove', handleOverlayMouseMove); // hover detection on canvas
-      // mouseup removed from canvas — handled by window listener above
+      overlayCanvas.addEventListener('mousemove', handleOverlayMouseMove);
       overlayCanvas.addEventListener('dblclick', handleOverlayDoubleClick);
+
+      // ── Warp tool overlay (touch) ──────────────────────────────────────────
+      overlayCanvas.addEventListener('touchstart', (e) => {
+        if (!isModalOpen() || e.touches.length !== 1) return;
+        handleOverlayMouseDown({ clientX: e.touches[0].clientX, clientY: e.touches[0].clientY, button: 0, preventDefault: () => {} });
+        e.preventDefault();
+      }, { passive: false });
+      overlayCanvas.addEventListener('touchmove', (e) => {
+        if (!isModalOpen() || e.touches.length !== 1) return;
+        handleOverlayMouseMove({ clientX: e.touches[0].clientX, clientY: e.touches[0].clientY });
+        e.preventDefault();
+      }, { passive: false });
+      overlayCanvas.addEventListener('touchend', (e) => {
+        if (!isModalOpen()) return;
+        handleOverlayMouseUp({ button: 0 });
+      }, { passive: true });
+
       workspaceViewport.addEventListener('dragover', (e) => e.preventDefault());
       workspaceViewport.addEventListener('drop', dropFile);
     }

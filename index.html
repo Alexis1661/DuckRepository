@@ -331,8 +331,8 @@
       margin: auto;
       position: relative;
       box-shadow: 0 30px 70px rgba(0,0,0,0.6);
-      transition: transform 0.1s ease-out;
       transform-origin: center center;
+      will-change: transform;
     }
 
     /* The Main scaled container */
@@ -384,6 +384,7 @@
       cursor: grab;
       user-select: none;
       touch-action: none;
+      will-change: transform;
     }
     .canvas-accessory.dragging {
       cursor: grabbing;
@@ -2097,6 +2098,26 @@
     // ==========================================
     // RENDER FUNCTIONS (CANVAS & STACK)
     // ==========================================
+    // ── Fast drag render: update transforms in-place via RAF, skip DOM rebuild ──
+    let _mainRafId = null;
+    function renderFast() {
+      if (_mainRafId) return;
+      _mainRafId = requestAnimationFrame(() => {
+        _mainRafId = null;
+        state.accessories.forEach(acc => {
+          const el = document.getElementById(`canvas-acc-${acc.id}`);
+          if (!el) return;
+          el.style.display   = acc.visible ? '' : 'none';
+          const fX = acc.flipX ? -1 : 1;
+          el.style.left      = `${acc.position.x}px`;
+          el.style.top       = `${acc.position.y}px`;
+          el.style.transform = `translate(-50%, -50%) rotate(${acc.rotation}deg) scale(${acc.scale.x * fX}, ${acc.scale.y})`;
+          el.style.opacity   = acc.opacity;
+        });
+        updateSelectedGizmo();
+      });
+    }
+
     function renderAll() {
       renderCanvasAccessories();
       updateBodyLayerZIndices();   // ← keeps body layers interleaved with accessories
@@ -2790,7 +2811,7 @@
           acc.scale.x = Math.max(0.1, Math.min(3.0, dragStartAccState.scaleX * mult));
           acc.scale.y = Math.max(0.1, Math.min(3.0, dragStartAccState.scaleY * mult));
         }
-        renderAll();
+        renderFast(); // hot-path: update transforms in-place, no DOM rebuild
       }
 
       function endGizmoDrag() {
@@ -2818,7 +2839,7 @@
           const ratio = dist / pinchStartDist;
           acc.scale.x = Math.max(0.1, Math.min(3.0, pinchStartScaleX * ratio));
           acc.scale.y = Math.max(0.1, Math.min(3.0, pinchStartScaleY * ratio));
-          renderAll();
+          renderFast(); // hot-path
           e.preventDefault();
           return;
         }
@@ -4161,9 +4182,13 @@
     // WebGL
     let gl = null, shaderProgram = null, texture = null;
     let glBuffers = { position: null, texcoord: null, strain: null, index: null };
+    let _glLoc = null;   // cached attrib/uniform locations (set once after link)
+    let overlayCtx = null; // cached 2D context for overlay canvas
     const DENSE_GRID_SIZE = 40;
     let denseGridVerticesOriginal = [], denseGridTexCoords = [], denseGridIndices = [];
     let denseGridVerticesDeformed = [], denseGridStrain = [];
+    // Cache key for original grid (rebuilt only when bounding box size changes)
+    let _origGridKey = '';
 
     let initialized = false;
     let _pendingDeformRestore = null; // saved deformation state to apply after image loads
@@ -4187,6 +4212,8 @@
       overlayCanvas     = document.getElementById('def-overlay-canvas');
       welcomeOverlay    = document.getElementById('def-welcome-overlay');
       ctxMenu           = document.getElementById('def-context-menu');
+      // Cache 2D context once — avoid repeated getContext calls every frame
+      overlayCtx = overlayCanvas ? overlayCanvas.getContext('2d') : null;
     }
 
     // ==========================================
@@ -4263,6 +4290,16 @@
       glBuffers.position = gl.createBuffer(); glBuffers.texcoord = gl.createBuffer();
       glBuffers.strain = gl.createBuffer(); glBuffers.index = gl.createBuffer();
       generateStaticTriangulationBuffers();
+      // Cache attribute/uniform locations — looked up ONCE, never per-frame
+      gl.useProgram(shaderProgram);
+      _glLoc = {
+        pos:    gl.getAttribLocation(shaderProgram,  'a_position'),
+        tex:    gl.getAttribLocation(shaderProgram,  'a_texcoord'),
+        strain: gl.getAttribLocation(shaderProgram,  'a_strain'),
+        uRes:   gl.getUniformLocation(shaderProgram, 'u_resolution'),
+        uOp:    gl.getUniformLocation(shaderProgram, 'u_opacity'),
+        uImg:   gl.getUniformLocation(shaderProgram, 'u_image'),
+      };
     }
 
     function compileShader(type, source) {
@@ -4876,11 +4913,17 @@
       if (!state.imageLoaded) return;
       const steps = DENSE_GRID_SIZE, { width: w, height: h } = state.boundingBox;
       const box = state.boundingBox;
-      denseGridVerticesOriginal = []; denseGridVerticesDeformed = []; denseGridStrain = [];
+      denseGridVerticesDeformed = []; denseGridStrain = [];
 
-      for (let r = 0; r <= steps; r++)
-        for (let c = 0; c <= steps; c++)
-          denseGridVerticesOriginal.push((c/steps)*w, (r/steps)*h);
+      // Only rebuild the original (undeformed) grid when the bounding-box size changes
+      const gridKey = `${w.toFixed(1)}_${h.toFixed(1)}`;
+      if (_origGridKey !== gridKey) {
+        _origGridKey = gridKey;
+        denseGridVerticesOriginal = [];
+        for (let r = 0; r <= steps; r++)
+          for (let c = 0; c <= steps; c++)
+            denseGridVerticesOriginal.push((c/steps)*w, (r/steps)*h);
+      }
 
       // ── Step 1: Bilinear deformation from meshPoints (ALWAYS active) ─────────
       const intermediate = [];
@@ -4967,6 +5010,13 @@
     // ==========================================
     // RENDER
     // ==========================================
+    // RAF-batched render for drag hot-path — prevents piling up sync calls
+    let _warpRafId = null;
+    function scheduleRenderAll() {
+      if (_warpRafId) return;
+      _warpRafId = requestAnimationFrame(() => { _warpRafId = null; renderAll(); });
+    }
+
     function renderAll() {
       if (!state.imageLoaded) return;
       calculateDeformedMesh(); drawWebGLScene(); drawOverlayScene(); updatePointInspector();
@@ -4976,21 +5026,22 @@
       gl.viewport(0,0,glCanvas.width,glCanvas.height);
       gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT);
       gl.useProgram(shaderProgram);
+      // Upload deformed vertex positions
       gl.bindBuffer(gl.ARRAY_BUFFER,glBuffers.position);
       gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(denseGridVerticesDeformed),gl.DYNAMIC_DRAW);
-      const posAttr=gl.getAttribLocation(shaderProgram,"a_position");
-      gl.enableVertexAttribArray(posAttr); gl.vertexAttribPointer(posAttr,2,gl.FLOAT,false,0,0);
-      const texAttr=gl.getAttribLocation(shaderProgram,"a_texcoord");
-      gl.enableVertexAttribArray(texAttr);
-      gl.bindBuffer(gl.ARRAY_BUFFER,glBuffers.texcoord); gl.vertexAttribPointer(texAttr,2,gl.FLOAT,false,0,0);
+      gl.enableVertexAttribArray(_glLoc.pos); gl.vertexAttribPointer(_glLoc.pos,2,gl.FLOAT,false,0,0);
+      // Tex-coords (static — bound once, just point)
+      gl.bindBuffer(gl.ARRAY_BUFFER,glBuffers.texcoord);
+      gl.enableVertexAttribArray(_glLoc.tex); gl.vertexAttribPointer(_glLoc.tex,2,gl.FLOAT,false,0,0);
+      // Strain
       gl.bindBuffer(gl.ARRAY_BUFFER,glBuffers.strain);
       gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(denseGridStrain),gl.DYNAMIC_DRAW);
-      const strainAttr=gl.getAttribLocation(shaderProgram,"a_strain");
-      gl.enableVertexAttribArray(strainAttr); gl.vertexAttribPointer(strainAttr,1,gl.FLOAT,false,0,0);
-      gl.uniform2f(gl.getUniformLocation(shaderProgram,"u_resolution"),glCanvas.width,glCanvas.height);
-      gl.uniform1f(gl.getUniformLocation(shaderProgram,"u_opacity"),1.0);
+      gl.enableVertexAttribArray(_glLoc.strain); gl.vertexAttribPointer(_glLoc.strain,1,gl.FLOAT,false,0,0);
+      // Uniforms (cached locations — no per-frame string lookup)
+      gl.uniform2f(_glLoc.uRes,glCanvas.width,glCanvas.height);
+      gl.uniform1f(_glLoc.uOp,1.0);
       gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,texture);
-      gl.uniform1i(gl.getUniformLocation(shaderProgram,"u_image"),0);
+      gl.uniform1i(_glLoc.uImg,0);
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,glBuffers.index);
       gl.drawElements(gl.TRIANGLES,denseGridIndices.length,gl.UNSIGNED_SHORT,0);
     }
@@ -5021,7 +5072,8 @@
     }
 
     function drawOverlayScene() {
-      const ctx=overlayCanvas.getContext('2d');
+      if (!overlayCtx) return;
+      const ctx=overlayCtx;
       ctx.clearRect(0,0,overlayCanvas.width,overlayCanvas.height);
       const box=state.boundingBox, steps=DENSE_GRID_SIZE;
 
@@ -5067,15 +5119,17 @@
         }
       });
       if (state.mode==='mesh'&&state.showGridMesh) {
+        // Build a Map once — avoids O(n²) find() inside nested loops
+        const meshMap = new Map(state.meshPoints.map(p=>[p.id,p]));
         ctx.strokeStyle='rgba(16,185,129,0.5)'; ctx.lineWidth=1.5;
         for (let r=0;r<=state.gridRows;r++) {
           ctx.beginPath();
-          for (let c=0;c<=state.gridCols;c++) { const pt=state.meshPoints.find(p=>p.id===`cp_${c}_${r}`); if(pt){c===0?ctx.moveTo(box.x+pt.deformedX,box.y+pt.deformedY):ctx.lineTo(box.x+pt.deformedX,box.y+pt.deformedY);} }
+          for (let c=0;c<=state.gridCols;c++) { const pt=meshMap.get(`cp_${c}_${r}`); if(pt){c===0?ctx.moveTo(box.x+pt.deformedX,box.y+pt.deformedY):ctx.lineTo(box.x+pt.deformedX,box.y+pt.deformedY);} }
           ctx.stroke();
         }
         for (let c=0;c<=state.gridCols;c++) {
           ctx.beginPath();
-          for (let r=0;r<=state.gridRows;r++) { const pt=state.meshPoints.find(p=>p.id===`cp_${c}_${r}`); if(pt){r===0?ctx.moveTo(box.x+pt.deformedX,box.y+pt.deformedY):ctx.lineTo(box.x+pt.deformedX,box.y+pt.deformedY);} }
+          for (let r=0;r<=state.gridRows;r++) { const pt=meshMap.get(`cp_${c}_${r}`); if(pt){r===0?ctx.moveTo(box.x+pt.deformedX,box.y+pt.deformedY):ctx.lineTo(box.x+pt.deformedX,box.y+pt.deformedY);} }
           ctx.stroke();
         }
       }
@@ -5175,7 +5229,7 @@
         state.boundingBox={x:nx,y:ny,width:nw,height:nh};
         const sv=(id,v)=>{const el=document.getElementById(id);if(el)el.value=Math.round(v);};
         sv('def-box-x',nx);sv('def-box-y',ny);sv('def-box-w',nw);sv('def-box-h',nh);
-        renderAll(); return;
+        scheduleRenderAll(); return;
       }
 
       // ── MOVE BBOX drag ──
@@ -5186,13 +5240,13 @@
         const bxEl=document.getElementById('def-box-x'), byEl=document.getElementById('def-box-y');
         if(bxEl)bxEl.value=Math.round(state.boundingBox.x);
         if(byEl)byEl.value=Math.round(state.boundingBox.y);
-        renderAll(); return;
+        scheduleRenderAll(); return;
       }
 
       if (controlPointDragging&&dragMode==='move_points') {
         const dx=mouse.x-dragMouseStartPos.x, dy=mouse.y-dragMouseStartPos.y;
         dragPointStartPos.forEach(start=>{const pt=activePoints.find(p=>p.id===start.id);if(pt){pt.deformedX=Math.max(0,Math.min(box.width,start.startDeformedX+dx));pt.deformedY=Math.max(0,Math.min(box.height,start.startDeformedY+dy));}});
-        renderAll(); return;
+        scheduleRenderAll(); return;
       }
       if (controlPointDragging&&dragMode==='edge_push') {
         const dx=mouse.x-dragMouseStartPos.x, dy=mouse.y-dragMouseStartPos.y;
@@ -5207,7 +5261,7 @@
           pt.deformedX=Math.max(0,Math.min(box.width,start.startDeformedX+dx*weight));
           pt.deformedY=Math.max(0,Math.min(box.height,start.startDeformedY+dy*weight));
         });
-        renderAll(); return;
+        scheduleRenderAll(); return;
       }
       // In Move mode: show resize cursor over handles, grab elsewhere
       if (state.mode==='move') {
@@ -5220,7 +5274,7 @@
 
       let hoveredId=null;
       for (const pt of activePoints) { if(Math.hypot(mouse.x-(box.x+pt.deformedX),mouse.y-(box.y+pt.deformedY))<=10){hoveredId=pt.id;break;} }
-      if (hoveredId!==state.hoveredPointId) { state.hoveredPointId=hoveredId; renderAll(); }
+      if (hoveredId!==state.hoveredPointId) { state.hoveredPointId=hoveredId; scheduleRenderAll(); }
       if (state.mode==='edge'&&!controlPointDragging) overlayCanvas.style.cursor=hitTestEdges(mouse)?'move':'crosshair';
       else overlayCanvas.style.cursor='crosshair';
     }

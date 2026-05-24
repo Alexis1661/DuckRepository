@@ -2057,27 +2057,23 @@
         img.className = 'canvas-layer';
         img.dataset.layer = layerName;
 
-        img.onload = async function() {
+        img.onload = function() {
           if (img.style.display === 'none') return;
-          // Capture original as data URL before processing (draw via offscreen canvas)
-          const orig = document.createElement('canvas');
-          orig.width = img.naturalWidth; orig.height = img.naturalHeight;
-          orig.getContext('2d').drawImage(img, 0, 0);
-          const originalDataUrl = orig.toDataURL('image/png');
-
-          // Init smoothing state for this layer
-          if (!bodyLayerSmoothingState[layerName]) {
-            bodyLayerSmoothingState[layerName] = { featherRadius: 1, edgeContract: -0.5, originalDataUrl, smoothedDataUrl: null };
-          } else {
-            bodyLayerSmoothingState[layerName].originalDataUrl = originalDataUrl;
+          // Capture original data URL for on-demand edge smoothing (not auto-applied on load
+          // to avoid processing 6M+ pixels per layer at startup)
+          try {
+            const orig = document.createElement('canvas');
+            orig.width = img.naturalWidth; orig.height = img.naturalHeight;
+            orig.getContext('2d').drawImage(img, 0, 0);
+            const originalDataUrl = orig.toDataURL('image/png');
+            if (!bodyLayerSmoothingState[layerName]) {
+              bodyLayerSmoothingState[layerName] = { featherRadius: 1, edgeContract: -0.5, originalDataUrl, smoothedDataUrl: null };
+            } else {
+              bodyLayerSmoothingState[layerName].originalDataUrl = originalDataUrl;
+            }
+          } catch(e) {
+            console.warn(`Could not capture original for ${layerName}:`, e);
           }
-
-          // Apply default smoothing
-          const smoothed = await EdgeSmoother.process(originalDataUrl,
-            bodyLayerSmoothingState[layerName].featherRadius,
-            bodyLayerSmoothingState[layerName].edgeContract);
-          bodyLayerSmoothingState[layerName].smoothedDataUrl = smoothed;
-          img.src = smoothed;
         };
 
         img.onerror = () => {
